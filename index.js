@@ -1,122 +1,206 @@
+const STORAGE_KEY = 'clearbudget-data';
+
+const CATEGORY_COLORS = {
+    Food: '#22c55e',
+    Transport: '#f59e0b',
+    Housing: '#6366f1',
+    Entertainment: '#ec4899',
+    Shopping: '#a855f7',
+    Other: '#8b8b9e',
+};
+
+const defaultState = () => ({
+    budget: 0,
+    expenses: [],
+});
+
+function loadState() {
+    try {
+        const saved = localStorage.getItem(STORAGE_KEY);
+        return saved ? { ...defaultState(), ...JSON.parse(saved) } : defaultState();
+    } catch {
+        return defaultState();
+    }
+}
+
+let state = loadState();
+
+function setState(updates) {
+    state = { ...state, ...updates };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    render();
+}
+
+function formatMoney(amount) {
+    return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+    }).format(amount);
+}
+
+function getTotalSpent() {
+    return state.expenses.reduce((sum, e) => sum + e.amount, 0);
+}
+
+function getRemaining() {
+    return state.budget - getTotalSpent();
+}
+
+function getCategoryTotals() {
+    return state.expenses.reduce((totals, expense) => {
+        totals[expense.category] = (totals[expense.category] || 0) + expense.amount;
+        return totals;
+    }, {});
+}
+
+function addExpense(description, amount, category) {
+    const expense = {
+        id: crypto.randomUUID(),
+        description: description.trim(),
+        amount: parseFloat(amount),
+        category,
+        date: new Date().toISOString(),
+    };
+
+    setState({ expenses: [expense, ...state.expenses] });
+}
+
+function deleteExpense(id) {
+    setState({ expenses: state.expenses.filter((e) => e.id !== id) });
+}
+
+function setBudget(amount) {
+    setState({ budget: parseFloat(amount) || 0 });
+}
+
+function renderSummary() {
+    const spent = getTotalSpent();
+    const remaining = getRemaining();
+    const percent = state.budget > 0 ? Math.min((spent / state.budget) * 100, 100) : 0;
+    const overBudget = remaining < 0;
+
+    document.getElementById('summary').innerHTML = `
+        <div class="summary-card">
+            <p class="summary-card__label">Budget</p>
+            <p class="summary-card__value">${formatMoney(state.budget)}</p>
+        </div>
+        <div class="summary-card">
+            <p class="summary-card__label">Spent</p>
+            <p class="summary-card__value">${formatMoney(spent)}</p>
+        </div>
+        <div class="summary-card">
+            <p class="summary-card__label">Remaining</p>
+            <p class="summary-card__value ${overBudget ? 'negative' : 'positive'}">
+                ${formatMoney(remaining)}
+            </p>
+        </div>
+        <div class="progress-wrap">
+            <div class="progress-header">
+                <span>Budget used</span>
+                <span>${state.budget > 0 ? Math.round((spent / state.budget) * 100) : 0}%</span>
+            </div>
+            <div class="progress-bar">
+                <div class="progress-bar__fill ${overBudget ? 'over' : ''}" style="width: ${percent}%"></div>
+            </div>
+        </div>
+    `;
+}
+
+function renderCategories() {
+    const totals = getCategoryTotals();
+    const entries = Object.entries(totals).sort((a, b) => b[1] - a[1]);
+    const container = document.getElementById('categories');
+
+    if (entries.length === 0) {
+        container.innerHTML = '<p class="categories-empty">Spending by category will show here.</p>';
+        return;
+    }
+
+    container.innerHTML = entries
+        .map(
+            ([name, amount]) => `
+            <div class="category-item">
+                <span class="category-dot" style="background: ${CATEGORY_COLORS[name] || CATEGORY_COLORS.Other}"></span>
+                <span class="category-item__name">${name}</span>
+                <span class="category-item__amount">${formatMoney(amount)}</span>
+            </div>
+        `
+        )
+        .join('');
+}
+
+function renderExpenses() {
+    const list = document.getElementById('expenseList');
+    const count = document.getElementById('expenseCount');
+
+    count.textContent = `${state.expenses.length} item${state.expenses.length !== 1 ? 's' : ''}`;
+
+    list.innerHTML = state.expenses
+        .map((expense) => {
+            const date = new Date(expense.date).toLocaleDateString('en-US', {
+                month: 'short',
+                day: 'numeric',
+            });
+
+            return `
+                <li class="expense-item" data-id="${expense.id}">
+                    <div class="expense-item__info">
+                        <p class="expense-item__desc">${escapeHtml(expense.description)}</p>
+                        <p class="expense-item__meta">${expense.category} · ${date}</p>
+                    </div>
+                    <span class="expense-item__amount">-${formatMoney(expense.amount)}</span>
+                    <button class="btn btn--danger" data-delete="${expense.id}" aria-label="Delete expense">Delete</button>
+                </li>
+            `;
+        })
+        .join('');
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function render() {
+    renderSummary();
+    renderCategories();
+    renderExpenses();
+
+    const budgetInput = document.getElementById('budgetAmount');
+    if (document.activeElement !== budgetInput) {
+        budgetInput.value = state.budget || '';
+    }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
-    const nav = document.getElementById('nav');
-    const navToggle = document.getElementById('navToggle');
-    const navLinks = document.getElementById('navLinks');
-    const pricingToggle = document.getElementById('pricingToggle');
-    const ctaForm = document.getElementById('ctaForm');
-
-    // Navbar scroll effect
-    window.addEventListener('scroll', () => {
-        nav.classList.toggle('scrolled', window.scrollY > 20);
+    document.getElementById('currentMonth').textContent = new Date().toLocaleDateString('en-US', {
+        month: 'long',
+        year: 'numeric',
     });
 
-    // Mobile menu toggle
-    navToggle.addEventListener('click', () => {
-        navToggle.classList.toggle('active');
-        navLinks.classList.toggle('open');
-    });
-
-    navLinks.querySelectorAll('a').forEach(link => {
-        link.addEventListener('click', () => {
-            navToggle.classList.remove('active');
-            navLinks.classList.remove('open');
-        });
-    });
-
-    // Scroll reveal animations
-    const revealElements = document.querySelectorAll('.reveal');
-    const revealObserver = new IntersectionObserver(
-        (entries) => {
-            entries.forEach((entry, index) => {
-                if (entry.isIntersecting) {
-                    setTimeout(() => {
-                        entry.target.classList.add('visible');
-                    }, index * 80);
-                    revealObserver.unobserve(entry.target);
-                }
-            });
-        },
-        { threshold: 0.15, rootMargin: '0px 0px -40px 0px' }
-    );
-
-    revealElements.forEach(el => revealObserver.observe(el));
-
-    // Animated counters in hero stats
-    const counters = document.querySelectorAll('[data-count]');
-    const counterObserver = new IntersectionObserver(
-        (entries) => {
-            entries.forEach(entry => {
-                if (!entry.isIntersecting) return;
-
-                const el = entry.target;
-                const target = parseFloat(el.dataset.count);
-                const suffix = el.dataset.suffix || '';
-                const isDecimal = target % 1 !== 0;
-                const duration = 1500;
-                const start = performance.now();
-
-                function update(now) {
-                    const progress = Math.min((now - start) / duration, 1);
-                    const eased = 1 - Math.pow(1 - progress, 3);
-                    const current = target * eased;
-
-                    el.textContent = isDecimal
-                        ? current.toFixed(1) + suffix
-                        : Math.floor(current) + suffix;
-
-                    if (progress < 1) requestAnimationFrame(update);
-                }
-
-                requestAnimationFrame(update);
-                counterObserver.unobserve(el);
-            });
-        },
-        { threshold: 0.5 }
-    );
-
-    counters.forEach(counter => counterObserver.observe(counter));
-
-    // Pricing toggle (monthly / yearly)
-    const periodLabels = document.querySelectorAll('[data-period]');
-    const priceElements = document.querySelectorAll('.price');
-
-    pricingToggle.addEventListener('click', () => {
-        pricingToggle.classList.toggle('active');
-        const isYearly = pricingToggle.classList.contains('active');
-
-        periodLabels.forEach(label => {
-            label.classList.toggle('active', label.dataset.period === (isYearly ? 'yearly' : 'monthly'));
-        });
-
-        priceElements.forEach(price => {
-            price.textContent = isYearly ? price.dataset.yearly : price.dataset.monthly;
-        });
-    });
-
-    // CTA form submission
-    ctaForm.addEventListener('submit', (e) => {
+    document.getElementById('budgetForm').addEventListener('submit', (e) => {
         e.preventDefault();
-        const input = ctaForm.querySelector('input');
-        const btn = ctaForm.querySelector('button');
-        const originalText = btn.textContent;
-
-        btn.textContent = 'Thanks! Check your inbox ✓';
-        btn.style.pointerEvents = 'none';
-        input.value = '';
-
-        setTimeout(() => {
-            btn.textContent = originalText;
-            btn.style.pointerEvents = '';
-        }, 3000);
+        const amount = document.getElementById('budgetAmount').value;
+        setBudget(amount);
     });
 
-    // Animate dashboard chart bars on load
-    const bars = document.querySelectorAll('.bar');
-    bars.forEach((bar, i) => {
-        const height = bar.style.getPropertyValue('--h');
-        bar.style.setProperty('--h', '0%');
-        setTimeout(() => {
-            bar.style.setProperty('--h', height);
-        }, 600 + i * 100);
+    document.getElementById('expenseForm').addEventListener('submit', (e) => {
+        e.preventDefault();
+
+        const desc = document.getElementById('expenseDesc').value;
+        const amount = document.getElementById('expenseAmount').value;
+        const category = document.getElementById('expenseCategory').value;
+
+        addExpense(desc, amount, category);
+        e.target.reset();
+        document.getElementById('expenseDesc').focus();
     });
+
+    document.getElementById('expenseList').addEventListener('click', (e) => {
+        const btn = e.target.closest('[data-delete]');
+        if (btn) deleteExpense(btn.dataset.delete);
+    });
+
+    render();
 });
